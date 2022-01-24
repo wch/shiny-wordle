@@ -9,13 +9,13 @@ ui <- fluidPage(
   .container-fluid {
       text-align: center;
   }
-  #results {
+  .guesses {
       margin: 10px 2px;
   }
-  #results > .word {
+  .guesses .word {
       margin: 5px;
   }
-  #results > .word > .letter {
+  .guesses .word > .letter {
       display: inline-block;
       width: 50px;
       height: 50px;
@@ -30,14 +30,19 @@ ui <- fluidPage(
       color: white;
       font-family: 'Clear Sans', 'Helvetica Neue', Arial, sans-serif;
   }
-  #results > .word > .correct {
+  .guesses .word > .correct {
       background-color: #6a5;
   }
-  #results > .word > .in-word {
+  .guesses .word > .in-word {
       background-color: #db5;
   }
-  #results > .word > .not-in-word {
+  .guesses .word > .not-in-word {
       background-color: #888;
+  }
+  .guesses .word > .guess {
+      color: black;
+      background-color: white;
+      border: 1px solid black;
   }
   .keyboard {
   }
@@ -89,7 +94,11 @@ ui <- fluidPage(
       box-shadow: 4px 4px 19px rgb(0 0 0 / 17%);
   }")),
   h3("Shiny wordle"),
-  uiOutput("results"),
+  div(
+    class = "guesses",
+    uiOutput("previous_guesses"),
+    uiOutput("current_guess")
+  ),
   uiOutput("endgame"),
   uiOutput("keyboard"),
   uiOutput("new_game_ui"),
@@ -121,7 +130,7 @@ server <- function(input, output) {
   target_word <- reactiveVal(sample(words_common, 1))
   all_guesses <- reactiveVal(list())
   finished <- reactiveVal(FALSE)
-  current_guess <- reactiveVal(character(0))
+  current_guess_letters <- reactiveVal(character(0))
 
   reset_game <- function() {
     target_word(sample(words_common, 1))
@@ -131,7 +140,7 @@ server <- function(input, output) {
 
 
   observeEvent(input$Enter, {
-    guess <- paste(current_guess(), collapse = "")
+    guess <- paste(current_guess_letters(), collapse = "")
 
     if (! guess %in% words_all)
       return()
@@ -154,10 +163,10 @@ server <- function(input, output) {
         finished(TRUE)
     }
 
-    current_guess(character(0))
+    current_guess_letters(character(0))
   })
 
-  output$results <- renderUI({
+  output$previous_guesses <- renderUI({
     res <- lapply(all_guesses(), function(guess) {
       letters <- guess$letters
       row <- mapply(
@@ -176,6 +185,28 @@ server <- function(input, output) {
     })
 
     tagList(res)
+  })
+
+  output$current_guess <- renderUI({
+    if (finished()) return()
+
+    letters <- current_guess_letters()
+
+    # Fill in blanks for letters up to length of target word. If letters is:
+    #   "a" "r"
+    # then result is:
+    #   "a" "r" "" "" ""
+    target_length <- isolate(nchar(target_word()))
+    if (length(letters) < target_length) {
+      letters[(length(letters)+1) : target_length] <- ""
+    }
+
+    div(
+      class = "word",
+      lapply(letters, function(letter) {
+        div(toupper(letter), class ="letter guess")
+      })
+    )
   })
 
   output$new_game_ui <- renderUI({
@@ -227,7 +258,6 @@ server <- function(input, output) {
 
   output$keyboard <- renderUI({
     prev_match_type <- used_letters()
-    str(prev_match_type)
     keyboard <- lapply(keys, function(row) {
       row_keys <- lapply(row, function(key) {
         class <- "key"
@@ -250,16 +280,16 @@ server <- function(input, output) {
   lapply(unlist(keys, recursive = FALSE), function(key) {
     if (key %in% c("Enter", "Back")) return()
     observeEvent(input[[key]], {
-      cur <- current_guess()
+      cur <- current_guess_letters()
       if (length(cur) >= 5)
         return()
-      current_guess(c(cur, tolower(key)))
+      current_guess_letters(c(cur, tolower(key)))
     })
   })
 
   observeEvent(input$Back, {
-    if (length(current_guess()) > 0) {
-      current_guess(current_guess()[-length(current_guess())])
+    if (length(current_guess_letters()) > 0) {
+      current_guess_letters(current_guess_letters()[-length(current_guess_letters())])
     }
   })
 
