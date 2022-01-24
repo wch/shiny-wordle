@@ -39,6 +39,44 @@ ui <- fluidPage(
   #results > .word > .not-in-word {
       background-color: #888;
   }
+  .keyboard {
+  }
+  .keyboard .keyboard-row {
+    margin: 3px;
+  }
+  .keyboard .keyboard-row .key {
+      display: inline-block;
+      padding: 0;
+      width: 30px;
+      height: 50px;
+      text-align: center;
+      vertical-align: middle;
+      border-radius: 3px;
+      line-height: 50px;
+      font-size: 18px;
+      font-weight: bold;
+      vertical-align: middle;
+      user-select: none;
+      color: black;
+      font-family: 'Clear Sans', 'Helvetica Neue', Arial, sans-serif;
+      background-color: #ddd;
+  }
+  .keyboard .keyboard-row .key.wide-key {
+    font-size: 15px;
+    width: 60px;
+  }
+  .keyboard .keyboard-row .key.correct {
+      background-color: #6a5;
+      color: white;
+  }
+  .keyboard .keyboard-row .key.in-word {
+      background-color: #db5;
+      color: white;
+  }
+  .keyboard .keyboard-row .key.not-in-word {
+      background-color: #888;
+      color: white;
+  }
   .endgame-content {
       font-family: Helvetica, Arial, sans-serif;
       display: inline-block;
@@ -53,13 +91,29 @@ ui <- fluidPage(
   h3("Shiny wordle"),
   uiOutput("results"),
   uiOutput("endgame"),
-  uiOutput("input_group_ui"),
+  uiOutput("keyboard"),
   uiOutput("new_game_ui"),
-  verbatimTextOutput("keyboard", placeholder = TRUE),
   div(
     style="display: inline-block;",
     checkboxInput("hard", "Hard mode")
-  )
+  ),
+  tags$script(HTML("
+    document.addEventListener('keydown', function(e) {
+      let letters = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L',
+                     'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X',
+                     'Y', 'Z'];
+      let key = e.code.replace(/^Key/, '');
+      console.log(key);
+      if (letters.includes(key)) {
+        document.getElementById(key).click();
+      } else if (key == 'Enter') {
+        document.getElementById('Enter').click();
+      } else if (key == 'Backspace') {
+        document.getElementById('Back').click();
+      }
+
+    });
+  "))
 )
 
 
@@ -67,6 +121,7 @@ server <- function(input, output) {
   target_word <- reactiveVal(sample(words_common, 1))
   all_guesses <- reactiveVal(list())
   finished <- reactiveVal(FALSE)
+  current_guess <- reactiveVal(character(0))
 
   reset_game <- function() {
     target_word(sample(words_common, 1))
@@ -74,10 +129,9 @@ server <- function(input, output) {
     finished(FALSE)
   }
 
-  observeEvent(input$go, {
-    req(input$guess)
-    guess <- tolower(input$guess)
-    guess <- sub(" +$", "", guess) # Remove trailing spaces
+
+  observeEvent(input$Enter, {
+    guess <- paste(current_guess(), collapse = "")
 
     if (! guess %in% words_all)
       return()
@@ -100,12 +154,12 @@ server <- function(input, output) {
         finished(TRUE)
     }
 
-    updateTextInput(inputId = "guess", value = "")
+    current_guess(character(0))
   })
 
   output$results <- renderUI({
     res <- lapply(all_guesses(), function(guess) {
-      letters <- strsplit(guess$word, "")[[1]]
+      letters <- guess$letters
       row <- mapply(
         letters,
         guess$matches,
@@ -124,38 +178,6 @@ server <- function(input, output) {
     tagList(res)
   })
 
-  output$input_group_ui <- renderUI({
-    if (finished())
-      return()
-
-    input_guess <- textInput("guess", "", placeholder="Enter 5-letter word")
-    input_guess <- htmltools::tagQuery(input_guess)
-    input_guess$addAttrs(style="display: inline-block;")
-    input_guess$children("input")$addAttrs(spellcheck="false", autocomplete="off")
-    input_guess <- input_guess$allTags()
-
-    keypress_js <- tags$script(HTML("
-      document.getElementById('guess').focus();
-      document.getElementById('guess')
-          .addEventListener('keypress', function(e) {
-              if (e.code === 'Enter') {
-                  // Trigger a click on the action button
-                  document.getElementById('go').click();
-              }
-          });
-      document.getElementById('go')
-          .addEventListener('click', function(e) {
-              document.getElementById('guess').focus();
-          });
-    "))
-
-    tagList(
-      input_guess,
-      actionButton("go", "Go"),
-      keypress_js
-    )
-  })
-
   output$new_game_ui <- renderUI({
     if (!finished())
       return()
@@ -168,27 +190,77 @@ server <- function(input, output) {
   })
 
   used_letters <- reactive({
-    all_guess_words <- lapply(all_guesses(), function(guess) {
-      strsplit(guess$word, "")[[1]]
+    # This is a named list. The structure will be something like:
+    # list(p = "not-in-word", a = "in-word", e = "correct")
+    letter_matches <- list()
+
+    # Populate `letter_matches` by iterating over all letters in all the guesses.
+    lapply(all_guesses(), function(guess) {
+      mapply(guess$letters, guess$matches, SIMPLIFY = FALSE, USE.NAMES = FALSE,
+        FUN = function(letter, match) {
+          prev_match <- letter_matches[[letter]]
+          if (is.null(prev_match)) {
+            # If there isn't an existing entry for that letter, just use it.
+            letter_matches[[letter]] <<- match
+          } else {
+            # If an entry is already present, it can be "upgraded":
+            # "not-in-word" < "in-word" < "correct"
+            if (match == "correct" && prev_match %in% c("not-in-word", "in-word")) {
+              letter_matches[[letter]] <<- match
+            } else if (match == "in-word" && prev_match == "not-in-word") {
+              letter_matches[[letter]] <<- match
+            }
+          }
+        }
+      )
     })
-    unique(unlist(all_guess_words))
+
+    letter_matches
   })
 
 
+  keys <- list(
+    c("Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P"),
+    c("A", "S", "D", "F", "G", "H", "J", "K", "L"),
+    c("Enter", "Z", "X", "C", "V", "B", "N", "M", "Back")
+  )
 
-  output$keyboard <- renderText({
-    keys <- paste(
-      " q  w  e  r  t  y  u  i  o  p ",
-      "  a  s  d  f  g  h  j  k  l ",
-      "   z  x  c  v  b  n  m ",
-      sep = "\n"
-    )
+  output$keyboard <- renderUI({
+    prev_match_type <- used_letters()
+    str(prev_match_type)
+    keyboard <- lapply(keys, function(row) {
+      row_keys <- lapply(row, function(key) {
+        class <- "key"
+        key_lower <- tolower(key)
+        if (!is.null(prev_match_type[[key_lower]])) {
+          class <- c(class, prev_match_type[[key_lower]])
+        }
+        if (key %in% c("Enter", "Back")) {
+          class <- c(class, "wide-key")
+        }
+        actionButton(key, key, class = class)
+      })
+      div(class = "keyboard-row", row_keys)
+    })
 
-    for (letter in used_letters()) {
-      keys <- sub(letter, " ", keys)
+    div(class = "keyboard", keyboard)
+  })
+
+  # Add listeners for each key, except Enter and Back
+  lapply(unlist(keys, recursive = FALSE), function(key) {
+    if (key %in% c("Enter", "Back")) return()
+    observeEvent(input[[key]], {
+      cur <- current_guess()
+      if (length(cur) >= 5)
+        return()
+      current_guess(c(cur, tolower(key)))
+    })
+  })
+
+  observeEvent(input$Back, {
+    if (length(current_guess()) > 0) {
+      current_guess(current_guess()[-length(current_guess())])
     }
-
-    keys
   })
 
 
@@ -243,6 +315,7 @@ check_word <- function(guess_str, target_str) {
 
   list(
     word = guess_str,
+    letters = guess,
     matches = result,
     win = all(result == "correct")
   )
